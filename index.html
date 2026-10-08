@@ -9,7 +9,7 @@
   :root {
     --bg: #E8ECEF;
     --card: #FFFFFF;
-    --text-main: #4A5568;
+    --text-main: #2D3748;
     --text-sub: #A0AEC0;
     --primary: #7B8FA1;
     --primary-light: #D1D9E0;
@@ -41,14 +41,19 @@
   #view-lesson.active { display: flex; }
   .lesson-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   .lesson-title { font-size: 18px; color: var(--primary); margin-bottom: 20px; font-weight: 600; text-align: center; }
-  .sentence-box { font-size: 28px; font-weight: 600; line-height: 1.5; margin-bottom: 20px; padding: 0 10px; text-align: center; color: var(--text-main); transition: all 0.3s; }
+  
+  /* 句子展示区 */
+  .sentence-area { background: #fff; border-radius: 20px; padding: 24px 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); margin-bottom: 20px; text-align: center; }
+  .sentence-box { font-size: 28px; font-weight: 600; line-height: 1.5; margin-bottom: 12px; color: var(--text-main); transition: all 0.3s; }
   .sentence-box .word { transition: color 0.3s; }
   .sentence-box .word.good { color: var(--success); }
-  .sentence-box .word.bad { color: var(--danger); }
-  .translation { font-size: 16px; color: var(--text-sub); margin-bottom: 40px; text-align: center; }
-  .lesson-body { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+  .sentence-box .word.bad { color: var(--danger); text-decoration: underline; }
+  .phonetic { font-size: 14px; color: var(--text-sub); margin-bottom: 8px; font-family: "Courier New", monospace; }
+  .translation { font-size: 15px; color: var(--text-sub); margin-bottom: 16px; }
+  .listen-btn { background: var(--primary-light); color: var(--text-main); border: none; padding: 8px 16px; border-radius: 20px; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
   
-  /* 声波图 */
+  /* 录音控制区 */
+  .record-area { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; }
   .waveform { display: flex; justify-content: center; align-items: center; gap: 4px; height: 60px; margin-bottom: 20px; opacity: 0; transition: opacity 0.3s; }
   .waveform.active { opacity: 1; }
   .waveform .bar { width: 6px; background: var(--record); border-radius: 3px; animation: wave 1s ease-in-out infinite; }
@@ -59,24 +64,29 @@
   .waveform .bar:nth-child(5) { height: 10px; animation-delay: 0.4s; }
   @keyframes wave { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(2); } }
   
-  /* 按钮 */
+  .btn-record { width: 80px; height: 80px; border-radius: 50%; font-size: 32px; display: flex; align-items: center; justify-content: center; background: var(--record); color: #fff; border: none; box-shadow: 0 6px 20px rgba(230,154,118,0.4); transition: all 0.3s; }
+  .btn-record.recording { background: var(--record-dark); animation: pulse-glow 1.5s infinite; }
+  @keyframes pulse-glow { 0% { box-shadow: 0 0 0 0 rgba(230,154,118,0.6); } 50% { box-shadow: 0 0 0 20px rgba(230,154,118,0); } 100% { box-shadow: 0 0 0 0 rgba(230,154,118,0); } }
+  
+  .status-text { margin-top: 16px; color: var(--text-sub); font-size: 14px; text-align: center; min-height: 20px; }
+  .tips-text { margin-top: 12px; color: var(--gold); font-size: 13px; text-align: center; }
+
+  /* 通用按钮 */
   .btn { display:block; width:100%; padding:16px; border:none; border-radius:14px; font-size:16px; font-weight:600; cursor:pointer; margin-top:12px; transition: all .2s; }
   .btn:active { transform: scale(0.97); }
   .btn-primary { background: var(--primary); color:#fff; }
   .btn-secondary { background: var(--primary-light); color: var(--text-main); }
   .btn-success { background: var(--success); color:#fff; }
   .btn-danger { background: var(--danger); color:#fff; }
-  .btn-record { width: 80px; height: 80px; border-radius: 50%; font-size: 32px; display: flex; align-items: center; justify-content: center; margin: 0 auto; background: var(--record); color: #fff; border: none; box-shadow: 0 6px 20px rgba(230,154,118,0.4); transition: all 0.3s; }
-  .btn-record.recording { background: var(--record-dark); animation: pulse-glow 1.5s infinite; }
-  @keyframes pulse-glow { 0% { box-shadow: 0 0 0 0 rgba(230,154,118,0.6); } 50% { box-shadow: 0 0 0 20px rgba(230,154,118,0); } 100% { box-shadow: 0 0 0 0 rgba(230,154,118,0); } }
+  .btn-text { background: transparent; color: var(--text-sub); font-size: 14px; padding: 8px; margin-top: 4px; }
   
   /* 关卡结算面板 */
   .settlement-panel { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.8); background: #fff; padding: 30px; border-radius: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); z-index: 2000; text-align: center; opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); max-width: 320px; width: 90%; }
   .settlement-panel.show { transform: translate(-50%, -50%) scale(1); opacity: 1; pointer-events: auto; }
   .star-row { display: flex; justify-content: center; gap: 10px; margin: 20px 0; }
   .star { font-size: 40px; color: #E2E8F0; transition: all 0.5s; }
-  .star.filled { color: #F6E05E; transform: scale(1.2); }
-  
+  .star.filled { color: #F6E05E; transform: scale(1.2); text-shadow: 0 0 10px rgba(246,224,94,0.5); }
+
   /* 底部导航与计时器 */
   .bottom-wrapper { position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; max-width: 720px; margin: 0 auto; background: #fff; border-top: 1px solid rgba(0,0,0,0.05); padding-bottom: env(safe-area-inset-bottom); }
   .timer-bar-container { height: 24px; background: var(--primary-light); display: flex; align-items: center; padding: 0 16px; position: relative; }
@@ -120,18 +130,25 @@
 <!-- 全屏学习视图（关卡1-4） -->
 <div id="view-lesson">
   <div class="lesson-header">
-    <button class="btn btn-secondary" id="closeLessonBtn" style="width: auto; padding: 8px 16px; margin: 0;">✕ 返回</button>
-    <button class="btn btn-secondary" id="skipBtn" style="width: auto; padding: 8px 16px; margin: 0; background: transparent; color: var(--text-sub);">跳过此句</button>
+    <button class="btn btn-text" id="closeLessonBtn" style="width: auto; margin: 0;">✕ 返回</button>
+    <span class="lesson-title" id="lessonTitle" style="margin-bottom: 0;">关卡1：热身</span>
+    <button class="btn btn-text" id="skipBtn" style="width: auto; margin: 0;">跳过此句</button>
   </div>
-  <div class="lesson-body">
-    <div class="lesson-title" id="lessonTitle">关卡1：热身</div>
-    <div class="sentence-box" id="sentenceBox"></div>
+  
+  <div class="sentence-area">
+    <div class="sentence-box" id="sentenceBox">Loading...</div>
+    <div class="phonetic" id="phoneticBox"></div>
     <div class="translation" id="translationBox"></div>
+    <button class="listen-btn" id="listenBtn">🔊 重听标准发音</button>
+  </div>
+
+  <div class="record-area">
     <div class="waveform" id="waveform">
       <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
     </div>
     <button class="btn-record" id="recordBtn">🎤</button>
-    <div style="margin-top: 20px; color: var(--text-sub); font-size: 14px; max-width: 90%;" id="lessonStatus">准备就绪</div>
+    <div class="status-text" id="lessonStatus">准备就绪</div>
+    <div class="tips-text" id="tipsText"></div>
     <button class="btn btn-primary" id="nextSentenceBtn" style="display: none; margin-top: 20px;">下一句 →</button>
   </div>
 </div>

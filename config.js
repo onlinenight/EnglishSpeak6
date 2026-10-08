@@ -7,6 +7,5 @@ const CONFIG = {
     totalMonths: 6,
     startDate: '2026-10-08'
   },
-  // 语音识别提供方：'baidu' 或 'browser'
-  asrProvider: 'browser' 
+  asrProvider: 'browser' // 必须使用 browser，因为你是 iPhone Safari 环境
 };

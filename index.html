@@ -3,40 +3,55 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>英语口语闯关</title>
+<title>英语口语沉浸闯关</title>
 <style>
+  /* ========= 莫兰迪色系全局变量 ========= */
+  :root {
+    --bg: #E8ECEF;
+    --card: #FFFFFF;
+    --text-main: #4A5568;
+    --text-sub: #A0AEC0;
+    --primary: #7B8FA1;
+    --primary-light: #D1D9E0;
+    --record: #E69A76;
+    --record-dark: #C77B57;
+    --success: #68D391;
+    --danger: #FC8181;
+    --gold: #D69E2E;
+  }
+  
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding-bottom: calc(80px + env(safe-area-inset-bottom)); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text-main); min-height: 100vh; padding-bottom: calc(80px + env(safe-area-inset-bottom)); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
   .container { max-width: 720px; margin: 0 auto; padding: 16px; }
   
-  /* 玻璃卡片 */
-  .glass-card { background: rgba(30, 41, 59, 0.65); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 20px; padding: 20px; margin-bottom: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+  /* 卡片 */
+  .card { background: var(--card); border-radius: 20px; padding: 20px; margin-bottom: 16px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); }
   .header { display:flex; justify-content:space-between; align-items:center; }
-  .day-badge { background: linear-gradient(135deg, #3b82f6, #2563eb); color:#fff; padding:6px 14px; border-radius:20px; font-size:13px; font-weight:600; }
-  .streak { color:#f59e0b; font-size:14px; font-weight:600; }
-  h1 { font-size:20px; margin:12px 0 6px; font-weight:700; }
-  .subtitle { color:#94a3b8; font-size:13px; }
+  .day-badge { background: var(--primary); color:#fff; padding:6px 14px; border-radius:20px; font-size:13px; font-weight:600; }
+  .streak { color:var(--gold); font-size:14px; font-weight:600; }
+  h1 { font-size:20px; margin:12px 0 6px; font-weight:700; color: var(--text-main); }
+  .subtitle { color:var(--text-sub); font-size:13px; }
+  
+  /* 进度条 */
+  .progress-bar { height:8px; background: var(--primary-light); border-radius:4px; margin-top:16px; overflow:hidden; }
+  .progress-fill { height:100%; background: var(--primary); border-radius:4px; transition:width .5s ease; }
   
   /* 全屏学习视图 */
-  #view-lesson { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0f172a; z-index: 1000; display: none; flex-direction: column; padding: 16px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+  #view-lesson { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 1000; display: none; flex-direction: column; padding: 16px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
   #view-lesson.active { display: flex; }
   .lesson-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-  .progress-ring { width: 60px; height: 60px; }
-  .progress-ring circle { fill: none; stroke-width: 6; stroke-linecap: round; }
-  .progress-ring .bg { stroke: #334155; }
-  .progress-ring .fg { stroke: #3b82f6; transition: stroke-dashoffset 0.5s ease; }
-  .lesson-body { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
-  .lesson-title { font-size: 18px; color: #60a5fa; margin-bottom: 20px; }
-  .sentence-box { font-size: 28px; font-weight: 600; line-height: 1.5; margin-bottom: 20px; padding: 0 10px; }
+  .lesson-title { font-size: 18px; color: var(--primary); margin-bottom: 20px; font-weight: 600; text-align: center; }
+  .sentence-box { font-size: 28px; font-weight: 600; line-height: 1.5; margin-bottom: 20px; padding: 0 10px; text-align: center; color: var(--text-main); transition: all 0.3s; }
   .sentence-box .word { transition: color 0.3s; }
-  .sentence-box .word.good { color: #22c55e; }
-  .sentence-box .word.bad { color: #ef4444; }
-  .translation { font-size: 16px; color: #94a3b8; margin-bottom: 40px; }
+  .sentence-box .word.good { color: var(--success); }
+  .sentence-box .word.bad { color: var(--danger); }
+  .translation { font-size: 16px; color: var(--text-sub); margin-bottom: 40px; text-align: center; }
+  .lesson-body { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
   
   /* 声波图 */
   .waveform { display: flex; justify-content: center; align-items: center; gap: 4px; height: 60px; margin-bottom: 20px; opacity: 0; transition: opacity 0.3s; }
   .waveform.active { opacity: 1; }
-  .waveform .bar { width: 6px; background: #3b82f6; border-radius: 3px; animation: wave 1s ease-in-out infinite; }
+  .waveform .bar { width: 6px; background: var(--record); border-radius: 3px; animation: wave 1s ease-in-out infinite; }
   .waveform .bar:nth-child(1) { height: 10px; animation-delay: 0s; }
   .waveform .bar:nth-child(2) { height: 20px; animation-delay: 0.1s; }
   .waveform .bar:nth-child(3) { height: 40px; animation-delay: 0.2s; }
@@ -47,25 +62,36 @@
   /* 按钮 */
   .btn { display:block; width:100%; padding:16px; border:none; border-radius:14px; font-size:16px; font-weight:600; cursor:pointer; margin-top:12px; transition: all .2s; }
   .btn:active { transform: scale(0.97); }
-  .btn-primary { background: linear-gradient(135deg, #3b82f6, #2563eb); color:#fff; box-shadow: 0 4px 15px rgba(59,130,246,0.3); }
-  .btn-secondary { background: rgba(51, 65, 85, 0.8); color:#e2e8f0; border: 1px solid rgba(255,255,255,0.1); }
-  .btn-success { background: linear-gradient(135deg, #22c55e, #16a34a); color:#fff; }
-  .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color:#fff; }
-  .btn-record { width: 80px; height: 80px; border-radius: 50%; font-size: 32px; display: flex; align-items: center; justify-content: center; margin: 0 auto; background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; border: none; box-shadow: 0 6px 20px rgba(239,68,68,0.5); transition: all 0.3s; }
-  .btn-record.recording { animation: pulse-glow 1.5s infinite; }
-  @keyframes pulse-glow { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.8); } 50% { box-shadow: 0 0 0 20px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
+  .btn-primary { background: var(--primary); color:#fff; }
+  .btn-secondary { background: var(--primary-light); color: var(--text-main); }
+  .btn-success { background: var(--success); color:#fff; }
+  .btn-danger { background: var(--danger); color:#fff; }
+  .btn-record { width: 80px; height: 80px; border-radius: 50%; font-size: 32px; display: flex; align-items: center; justify-content: center; margin: 0 auto; background: var(--record); color: #fff; border: none; box-shadow: 0 6px 20px rgba(230,154,118,0.4); transition: all 0.3s; }
+  .btn-record.recording { background: var(--record-dark); animation: pulse-glow 1.5s infinite; }
+  @keyframes pulse-glow { 0% { box-shadow: 0 0 0 0 rgba(230,154,118,0.6); } 50% { box-shadow: 0 0 0 20px rgba(230,154,118,0); } 100% { box-shadow: 0 0 0 0 rgba(230,154,118,0); } }
   
-  /* 底部导航 */
-  .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(15px); border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-around; padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); z-index: 100; max-width: 720px; margin: 0 auto; }
-  .nav-item { flex: 1; text-align: center; color: #64748b; font-size: 11px; cursor: pointer; padding: 4px 0; transition: color 0.2s; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  /* 关卡结算面板 */
+  .settlement-panel { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.8); background: #fff; padding: 30px; border-radius: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); z-index: 2000; text-align: center; opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); max-width: 320px; width: 90%; }
+  .settlement-panel.show { transform: translate(-50%, -50%) scale(1); opacity: 1; pointer-events: auto; }
+  .star-row { display: flex; justify-content: center; gap: 10px; margin: 20px 0; }
+  .star { font-size: 40px; color: #E2E8F0; transition: all 0.5s; }
+  .star.filled { color: #F6E05E; transform: scale(1.2); }
+  
+  /* 底部导航与计时器 */
+  .bottom-wrapper { position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; max-width: 720px; margin: 0 auto; background: #fff; border-top: 1px solid rgba(0,0,0,0.05); padding-bottom: env(safe-area-inset-bottom); }
+  .timer-bar-container { height: 24px; background: var(--primary-light); display: flex; align-items: center; padding: 0 16px; position: relative; }
+  .timer-bar-fill { position: absolute; top: 0; left: 0; height: 100%; background: var(--primary); opacity: 0.3; transition: width 0.5s ease; }
+  .timer-bar-text { position: relative; z-index: 2; font-size: 11px; color: var(--text-main); font-weight: 600; width: 100%; display: flex; justify-content: space-between; }
+  .bottom-nav { display: flex; justify-content: space-around; padding: 10px 0; }
+  .nav-item { flex: 1; text-align: center; color: var(--text-sub); font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; transition: color 0.2s; }
   .nav-item svg { width: 22px; height: 22px; fill: currentColor; }
-  .nav-item.active { color: #3b82f6; }
+  .nav-item.active { color: var(--primary); }
   
   .view { display: none; }
   .view.active { display: block; }
-  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-100px); background: rgba(30, 41, 59, 0.95); color: #fff; padding: 12px 24px; border-radius: 30px; font-size: 14px; z-index: 2000; transition: transform 0.3s; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); }
+  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-100px); background: rgba(74, 85, 104, 0.95); color: #fff; padding: 12px 24px; border-radius: 30px; font-size: 14px; z-index: 2000; transition: transform 0.3s; }
   .toast.show { transform: translateX(-50%) translateY(0); }
-  .loading { display:inline-block; width:14px; height:14px; border:2px solid #3b82f6; border-top-color:transparent; border-radius:50%; animation:spin .8s linear infinite; }
+  .loading { display:inline-block; width:14px; height:14px; border:2px solid var(--primary); border-top-color:transparent; border-radius:50%; animation:spin .8s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
 </style>
 </head>
@@ -73,36 +99,29 @@
 
 <!-- 视图1：今日学习 -->
 <div id="view-today" class="view active container">
-  <div class="glass-card">
+  <div class="card">
     <div class="header">
       <span class="day-badge" id="dayBadge">Day 1</span>
-      <div style="display:flex; gap:10px;">
-        <span class="streak" id="timerBadge">⏱ 0/30m</span>
-        <span class="streak" id="streak">🔥 0天</span>
-      </div>
+      <span class="streak" id="streak">🔥 0天</span>
     </div>
     <h1 id="monthTitle">第1月 · 敢开口·生存口语</h1>
     <p class="subtitle" id="weekTheme">第1周 · 自我介绍与寒暄</p>
-    <div class="progress-bar" style="height:8px; background:#334155; border-radius:4px; margin-top:16px; overflow:hidden;"><div class="progress-fill" id="progressFill" style="height:100%; background: linear-gradient(90deg, #3b82f6, #22c55e); border-radius:4px; transition:width .5s; width:0%"></div></div>
-    <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-top:8px;"><span id="xpText">0 XP</span><span id="progressText">0/180天</span></div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-sub); margin-top:8px;"><span id="xpText">0 XP</span><span id="progressText">0/180天</span></div>
   </div>
-  <div class="glass-card" style="text-align: center;">
-    <div class="step-title">🎯 今日任务目标</div>
-    <p class="subtitle" id="dailyGoalText" style="margin-bottom:20px; color:#fde047; font-size: 16px;"></p>
+  <div class="card" style="text-align: center;">
+    <div style="font-size:15px; font-weight:600; color:var(--primary); margin-bottom:12px;">🎯 今日任务目标</div>
+    <p class="subtitle" id="dailyGoalText" style="margin-bottom:20px; color:var(--gold); font-size: 16px;">正在生成...</p>
     <button class="btn btn-primary" id="startLessonBtn" style="font-size: 18px; padding: 18px;">🚀 开始今日闯关</button>
-    <button class="btn btn-secondary" id="reviewBtn">查看今日复盘</button>
-    <button class="btn btn-success" id="finishBtn">✅ 完成今日打卡</button>
+    <button class="btn btn-secondary" id="finishBtn">✅ 完成今日打卡</button>
   </div>
 </div>
 
 <!-- 全屏学习视图（关卡1-4） -->
 <div id="view-lesson">
   <div class="lesson-header">
-    <svg class="progress-ring" viewBox="0 0 60 60">
-      <circle class="bg" cx="30" cy="30" r="25"></circle>
-      <circle class="fg" id="progressRing" cx="30" cy="30" r="25" stroke-dasharray="157" stroke-dashoffset="157"></circle>
-    </svg>
-    <button class="btn btn-secondary" id="closeLessonBtn" style="width: auto; padding: 8px 16px; margin: 0;">✕ 关闭</button>
+    <button class="btn btn-secondary" id="closeLessonBtn" style="width: auto; padding: 8px 16px; margin: 0;">✕ 返回</button>
+    <button class="btn btn-secondary" id="skipBtn" style="width: auto; padding: 8px 16px; margin: 0; background: transparent; color: var(--text-sub);">跳过此句</button>
   </div>
   <div class="lesson-body">
     <div class="lesson-title" id="lessonTitle">关卡1：热身</div>
@@ -112,27 +131,39 @@
       <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
     </div>
     <button class="btn-record" id="recordBtn">🎤</button>
-    <div style="margin-top: 20px; color: #94a3b8; font-size: 14px;" id="lessonStatus">点击麦克风开始录音</div>
+    <div style="margin-top: 20px; color: var(--text-sub); font-size: 14px; max-width: 90%;" id="lessonStatus">准备就绪</div>
     <button class="btn btn-primary" id="nextSentenceBtn" style="display: none; margin-top: 20px;">下一句 →</button>
   </div>
 </div>
 
+<!-- 关卡结算面板 -->
+<div class="settlement-panel" id="settlementPanel">
+  <h2 style="font-size: 22px; color: var(--text-main); margin-bottom: 8px;" id="settlementTitle">恭喜通关！</h2>
+  <p class="subtitle" id="settlementDesc" style="margin-bottom: 16px;">你表现得非常棒！</p>
+  <div class="star-row" id="starRow">
+    <span class="star" id="star1">★</span>
+    <span class="star" id="star2">★</span>
+    <span class="star" id="star3">★</span>
+  </div>
+  <button class="btn btn-primary" id="continueBtn" style="margin-top: 16px;">继续闯关 →</button>
+</div>
+
 <!-- 视图2：复习 -->
 <div id="view-history" class="view container">
-  <div class="glass-card">
-    <div class="step-title">📅 历史打卡记录</div>
-    <div id="historyList" class="subtitle">暂无记录，去完成今天的任务吧！</div>
+  <div class="card">
+    <div style="font-size:15px; font-weight:600; color:var(--primary); margin-bottom:12px;">📅 历史打卡记录</div>
+    <div id="historyList" class="subtitle">暂无记录。</div>
   </div>
-  <div class="glass-card">
-    <div class="step-title">📊 今日复盘</div>
-    <div id="reviewContent"><p class="subtitle">完成对话后，点击下方按钮生成复盘报告。</p></div>
+  <div class="card">
+    <div style="font-size:15px; font-weight:600; color:var(--danger); margin-bottom:12px;">📌 未完成句子（点击重新学习）</div>
+    <div id="uncompletedList" class="subtitle">太棒了，没有未完成的句子！</div>
   </div>
 </div>
 
 <!-- 视图3：我的 -->
 <div id="view-settings" class="view container">
-  <div class="glass-card">
-    <div class="step-title">⚙️ 学习设置</div>
+  <div class="card">
+    <div style="font-size:15px; font-weight:600; color:var(--primary); margin-bottom:12px;">⚙️ 学习设置</div>
     <p class="subtitle">当前等级：LV2 (CEFR A1-A2)</p>
     <p class="subtitle">口音：英式英语 (en-GB)</p>
     <p class="subtitle">语音识别：浏览器自带 (Web Speech API)</p>
@@ -143,19 +174,28 @@
   </div>
 </div>
 
-<!-- 底部导航 -->
-<div class="bottom-nav">
-  <div class="nav-item active" data-view="view-today">
-    <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-    今日学习
+<!-- 底部导航与计时器 -->
+<div class="bottom-wrapper">
+  <div class="timer-bar-container">
+    <div class="timer-bar-fill" id="timerBarFill" style="width:0%"></div>
+    <div class="timer-bar-text">
+      <span>⏱ 今日学习</span>
+      <span id="timerText">0 / 30 分钟</span>
+    </div>
   </div>
-  <div class="nav-item" data-view="view-history">
-    <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
-    复习
-  </div>
-  <div class="nav-item" data-view="view-settings">
-    <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-    我的
+  <div class="bottom-nav">
+    <div class="nav-item active" data-view="view-today">
+      <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+      今日学习
+    </div>
+    <div class="nav-item" data-view="view-history">
+      <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+      复习
+    </div>
+    <div class="nav-item" data-view="view-settings">
+      <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+      我的
+    </div>
   </div>
 </div>
 

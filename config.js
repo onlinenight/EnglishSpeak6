@@ -7,12 +7,9 @@ const CONFIG = {
     totalMonths: 6,
     startDate: '2026-10-08'
   },
-  // 语音识别提供方：'baidu' 或 'browser'
-  asrProvider: 'baidu',
-  // 语音合成提供方：'baidu' 或 'browser'
-  ttsProvider: 'baidu',
-  // 百度TTS发音人：4189=度涵竹(英文女声)
-  baiduTtsPer: 4189,
-  // 百度ASR英语模型ID
+  // 核心修改：ASR 用回浏览器自带，避免百度 iOS 采样率报错
+  asrProvider: 'browser', 
+  ttsProvider: 'baidu', // 保留百度 TTS
+  baiduTtsPer: 4189,    // 度涵竹（英文女声）
   baiduAsrDevPid: 1737
 };

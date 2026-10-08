@@ -1,5 +1,5 @@
 // ============================================
-// app.js - 核心逻辑 (百度TTS语音合成 + 百度短语音识别)
+// app.js - 核心逻辑 (百度TTS语音合成 + 百度短语音识别 + 重采样修复)
 // ============================================
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -117,7 +117,7 @@ async function baiduASR(audioBlob) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       format: 'wav',
-      rate: 16000,
+      rate: 16000, // 重采样后固定为16000
       channel: 1,
       cuid: 'speak6_user',
       token: token,
@@ -131,15 +131,16 @@ async function baiduASR(audioBlob) {
   throw new Error('识别失败：' + (data.err_msg || JSON.stringify(data)));
 }
 
-// ---------- 录音逻辑（AudioContext采集PCM） ----------
+// ---------- 录音逻辑（AudioContext采集PCM + 重采样） ----------
 let audioContext = null;
 let scriptProcessor = null;
 let mediaStream = null;
 let audioChunks = [];
 
 async function startRecording() {
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
-  audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+  // 注意：这里不强制指定 sampleRate，让 iOS 使用默认硬件采样率
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
   const source = audioContext.createMediaStreamSource(mediaStream);
   scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
   audioChunks = [];
@@ -150,13 +151,39 @@ async function startRecording() {
 
 function stopRecording() {
   return new Promise((resolve) => {
+    const actualSampleRate = audioContext.sampleRate; // 获取实际采样率（如 44100 或 48000）
     try { scriptProcessor.disconnect(); mediaStream.getTracks().forEach(t => t.stop()); audioContext.close(); } catch (e) {}
+    
     const totalLength = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0);
     const merged = new Float32Array(totalLength);
     let offset = 0;
     for (const chunk of audioChunks) { merged.set(chunk, offset); offset += chunk.length; }
-    resolve(new Blob([encodeWAV(merged, 16000)], { type: 'audio/wav' }));
+    
+    // 将实际采样率重采样到 16000Hz
+    const resampled = resampleTo16000(merged, actualSampleRate);
+    resolve(new Blob([encodeWAV(resampled, 16000)], { type: 'audio/wav' }));
   });
+}
+
+// 重采样函数（降采样）
+function resampleTo16000(samples, originalRate) {
+  if (originalRate === 16000) return samples;
+  const ratio = originalRate / 16000;
+  const newLength = Math.round(samples.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const index = i * ratio;
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    const fraction = index - lower;
+    if (upper >= samples.length) {
+      result[i] = samples[samples.length - 1];
+    } else {
+      // 线性插值，避免杂音
+      result[i] = samples[lower] * (1 - fraction) + samples[upper] * fraction;
+    }
+  }
+  return result;
 }
 
 function encodeWAV(samples, sampleRate) {
@@ -181,7 +208,6 @@ function writeString(view, offset, string) { for (let i = 0; i < string.length; 
 let ttsAudio = null;
 
 async function speak(text) {
-  // 如果用的是浏览器TTS
   if (CONFIG.ttsProvider === 'browser') {
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
@@ -194,7 +220,6 @@ async function speak(text) {
     });
   }
 
-  // 百度TTS
   try {
     const res = await fetch(`${CONFIG.proxyUrl}?path=baidu-tts`, {
       method: 'POST',
@@ -216,7 +241,6 @@ async function speak(text) {
     });
   } catch (e) {
     console.error('百度TTS失败，降级到浏览器TTS:', e);
-    // 降级
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = CONFIG.study.accent; u.rate = 0.85;

@@ -1,5 +1,5 @@
 // ============================================
-// app.js - 核心逻辑 (百度ASR重采样修复 + 原生TTS + 状态机)
+// app.js - 核心逻辑 (浏览器原生识别 + 百度TTS + 稳定状态机)
 // ============================================
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -83,126 +83,23 @@ document.querySelectorAll('.nav-item').forEach(item => {
   });
 });
 
-// ---------- 百度语音识别（重采样修复） ----------
+// ---------- 原生语音识别 ----------
+let recognition = null;
 let isRecording = false;
 let recordingTimeout = null;
 let currentStepIndex = 0;
 let currentSentenceIndex = 0;
 let lessonData = null;
 
-let baiduToken = null;
-let baiduTokenExpire = 0;
-
-async function getBaiduToken() {
-  const now = Date.now();
-  if (baiduToken && now < baiduTokenExpire) return baiduToken;
-  const res = await fetch(`${CONFIG.proxyUrl}?path=baidu-token`);
-  const data = await res.json();
-  if (!data.access_token) throw new Error('获取百度token失败');
-  baiduToken = data.access_token;
-  baiduTokenExpire = now + (data.expires_in - 600) * 1000;
-  return baiduToken;
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-GB';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
 }
 
-async function baiduASR(audioBlob) {
-  const token = await getBaiduToken();
-  const buffer = await audioBlob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-  const base64 = btoa(binary);
-  const res = await fetch(`${CONFIG.proxyUrl}?path=baidu-asr`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      format: 'wav',
-      rate: 16000,
-      channel: 1,
-      cuid: 'speak6_user',
-      token: token,
-      dev_pid: CONFIG.baiduAsrDevPid,
-      speech: base64,
-      len: buffer.byteLength
-    })
-  });
-  const data = await res.json();
-  if (data.err_no === 0 && data.result && data.result[0]) return data.result[0];
-  throw new Error('识别失败：' + (data.err_msg || JSON.stringify(data)));
-}
-
-// ---------- 录音逻辑（AudioContext采集PCM + 强制重采样） ----------
-let audioContext = null;
-let scriptProcessor = null;
-let mediaStream = null;
-let audioChunks = [];
-
-async function startRecording() {
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
-  // 获取浏览器当前环境的真实采样率（如48000）
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  const source = audioContext.createMediaStreamSource(mediaStream);
-  scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-  audioChunks = [];
-  scriptProcessor.onaudioprocess = (e) => { audioChunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
-  source.connect(scriptProcessor);
-  scriptProcessor.connect(audioContext.destination);
-}
-
-function stopRecording() {
-  return new Promise((resolve) => {
-    const actualSampleRate = audioContext.sampleRate; // 获取48000或44100
-    try { scriptProcessor.disconnect(); mediaStream.getTracks().forEach(t => t.stop()); audioContext.close(); } catch (e) {}
-    
-    const totalLength = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const merged = new Float32Array(totalLength);
-    let offset = 0;
-    for (const chunk of audioChunks) { merged.set(chunk, offset); offset += chunk.length; }
-    
-    // 关键修复：强制重采样为16000Hz
-    const resampled = resampleTo16000(merged, actualSampleRate);
-    resolve(new Blob([encodeWAV(resampled, 16000)], { type: 'audio/wav' }));
-  });
-}
-
-// 重采样函数
-function resampleTo16000(samples, originalRate) {
-  if (originalRate === 16000) return samples;
-  const ratio = originalRate / 16000;
-  const newLength = Math.round(samples.length / ratio);
-  const result = new Float32Array(newLength);
-  for (let i = 0; i < newLength; i++) {
-    const index = i * ratio;
-    const lower = Math.floor(index);
-    const upper = Math.ceil(index);
-    const fraction = index - lower;
-    if (upper >= samples.length) {
-      result[i] = samples[samples.length - 1];
-    } else {
-      result[i] = samples[lower] * (1 - fraction) + samples[upper] * fraction;
-    }
-  }
-  return result;
-}
-
-function encodeWAV(samples, sampleRate) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  writeString(view, 0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true);
-  writeString(view, 8, 'WAVE'); writeString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-  writeString(view, 36, 'data'); view.setUint32(40, samples.length * 2, true);
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true); offset += 2;
-  }
-  return buffer;
-}
-function writeString(view, offset, string) { for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i)); }
-
-// ---------- TTS ----------
+// ---------- TTS（百度语音合成） ----------
 let ttsAudio = null;
 
 async function speak(text) {
@@ -386,19 +283,41 @@ async function startTTSAndRecord(sentence, stepIndex) {
   }, 800);
 }
 
-// ---------- 百度录音逻辑 ----------
+// ---------- 原生录音逻辑 ----------
 async function startRecordingSession(stepIndex) {
-  if (isRecording) return;
+  if (isRecording || !recognition) return;
   isRecording = true;
   document.getElementById('recordBtn').classList.add('recording');
   document.getElementById('waveform').classList.add('active');
   document.getElementById('lessonStatus').textContent = '录音中... 请朗读';
   
+  recognition.onresult = (e) => {
+    clearTimeout(recordingTimeout);
+    const userSpeech = e.results[0][0].transcript;
+    stopRecordingUI();
+    evaluateSpeech(userSpeech, stepIndex);
+  };
+
+  recognition.onerror = (e) => {
+    clearTimeout(recordingTimeout);
+    stopRecordingUI();
+    if (e.error === 'no-speech') showToast('没听清，请再试一次');
+    else if (e.error === 'network') showToast('网络错误，请使用 iPhone Safari 或电脑 Edge 浏览器');
+    else showToast('识别出错：' + e.error);
+  };
+
+  recognition.onend = () => {
+    clearTimeout(recordingTimeout);
+    stopRecordingUI();
+  };
+
   try {
-    await startRecording();
-    recordingTimeout = setTimeout(async () => {
+    recognition.start();
+    recordingTimeout = setTimeout(() => {
       if (isRecording) {
-        await endRecordingSession();
+        recognition.stop();
+        stopRecordingUI();
+        showToast('未识别到声音，请重试');
       }
     }, 6000);
   } catch (e) {
@@ -409,26 +328,18 @@ async function startRecordingSession(stepIndex) {
   }
 }
 
-async function endRecordingSession() {
+function stopRecordingUI() {
   if (!isRecording) return;
   isRecording = false;
   clearTimeout(recordingTimeout);
   document.getElementById('recordBtn').classList.remove('recording');
   document.getElementById('waveform').classList.remove('active');
   document.getElementById('lessonStatus').innerHTML = '<span class="loading"></span> 识别中...';
-
-  try {
-    const blob = await stopRecording();
-    const text = await baiduASR(blob);
-    evaluateSpeech(text, currentStepIndex);
-  } catch (e) {
-    document.getElementById('lessonStatus').textContent = '识别失败：' + e.message;
-  }
 }
 
-document.getElementById('recordBtn').addEventListener('click', async () => {
+document.getElementById('recordBtn').addEventListener('click', () => {
   if (isRecording) {
-    await endRecordingSession();
+    recognition.stop();
   } else {
     startRecordingSession(currentStepIndex);
   }

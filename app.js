@@ -1,5 +1,5 @@
 // ============================================
-// app.js - 核心逻辑 (拆解模式 + 跟读打分 + 累积计时 + 修复识别)
+// app.js - 核心逻辑 (沉浸式四关卡 + 逐词高亮 + 修复iOS卡死)
 // ============================================
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -65,11 +65,7 @@ function updateTimerUI() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    // 页面隐藏，时间依然在 localStorage，不需要做额外处理
-  } else {
-    updateTimerUI(); // 页面显示，立即刷新一次
-  }
+  if (!document.hidden) updateTimerUI();
 });
 
 // ---------- 视图切换 ----------
@@ -79,17 +75,17 @@ document.querySelectorAll('.nav-item').forEach(item => {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     item.classList.add('active');
     document.getElementById(item.dataset.view).classList.add('active');
-    
-    const fab = document.getElementById('fabRecord');
-    if (item.dataset.view === 'view-chat') { fab.style.display = 'flex'; } else { fab.style.display = 'none'; }
     if (item.dataset.view === 'view-history') renderHistory();
   });
 });
 
-// ---------- 浏览器语音识别 (Web Speech API) ----------
+// ---------- 全局状态与录音逻辑（核心：修复 iOS 卡死） ----------
 let recognition = null;
-let recognitionActive = false;
-let currentRecordingTarget = null; // 'chat' 或 跟读句子索引
+let isRecording = false;
+let recordingTimeout = null;
+let currentStepIndex = 0; // 0:热身 1:核心 2:对话 3:挑战
+let currentSentenceIndex = 0;
+let lessonData = null;
 
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -97,6 +93,51 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   recognition.lang = 'en-GB';
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
+}
+
+function startRecording() {
+  if (isRecording) return;
+  isRecording = true;
+  document.getElementById('recordBtn').classList.add('recording');
+  document.getElementById('waveform').classList.add('active');
+  document.getElementById('lessonStatus').textContent = '录音中... 请朗读';
+  
+  recognition.onresult = (e) => {
+    clearTimeout(recordingTimeout);
+    const userSpeech = e.results[0][0].transcript;
+    stopRecordingUI();
+    evaluateSpeech(userSpeech);
+  };
+
+  recognition.onerror = (e) => {
+    clearTimeout(recordingTimeout);
+    stopRecordingUI();
+    if (e.error === 'no-speech') showToast('没听清，请再试一次');
+    else showToast('识别出错：' + e.error);
+  };
+
+  recognition.onend = () => {
+    clearTimeout(recordingTimeout);
+    stopRecordingUI();
+  };
+
+  recognition.start();
+  // iOS 卡死修复：5秒超时强制重置
+  recordingTimeout = setTimeout(() => {
+    if (isRecording) {
+      recognition.stop();
+      stopRecordingUI();
+      showToast('未识别到声音，请重试');
+    }
+  }, 5000);
+}
+
+function stopRecordingUI() {
+  isRecording = false;
+  clearTimeout(recordingTimeout);
+  document.getElementById('recordBtn').classList.remove('recording');
+  document.getElementById('waveform').classList.remove('active');
+  document.getElementById('lessonStatus').innerHTML = '<span class="loading"></span> 分析中...';
 }
 
 // ---------- TTS ----------
@@ -123,7 +164,7 @@ async function askAI(messages) {
   return data.choices[0].message.content;
 }
 
-// ---------- 生成今日任务（拆解模式） ----------
+// ---------- 生成今日任务（四关卡拆解） ----------
 async function generateTodayTask() {
   const dayNum = getStudyDay();
   const info = getDayInfo(dayNum);
@@ -139,12 +180,16 @@ async function generateTodayTask() {
   document.getElementById('progressText').textContent = STATE.completedDays.length + '/180天';
   document.getElementById('streak').textContent = '🔥 ' + STATE.streak + '天';
 
-  document.getElementById('coreSentences').innerHTML = '<p class="subtitle"><span class="loading"></span> AI正在拆解今日任务...</p>';
+  document.getElementById('dailyGoalText').innerHTML = '<span class="loading"></span> AI正在拆解今日任务...';
   
   const prompt = `你是英语口语教练，学生水平CEFR A1-A2，英式英语。
 今天是第${dayNum}天，主题：${info.month.title}，本周：${info.week.theme}，今日任务：${info.day}。
-请将今日任务拆解为3个步骤，每个步骤包含2个核心句。并设定一个终极挑战。
-返回JSON格式：{"goal":"今日学习目标","steps":[{"stepName":"步骤1：...","sentences":[{"en":"","cn":""}]}],"challenge":"终极挑战描述"}。只返回JSON。`;
+请将今日任务拆解为4个关卡：
+关卡1：热身（1-2句核心句）
+关卡2：核心句型（2-3句核心句）
+关卡3：情景对话（AI扮演外国人，与学生自由对话）
+关卡4：今日挑战（1段综合文本，让学生连起来说）
+返回JSON格式：{"goal":"今日学习目标","warmup":["句子1"],"core":["句子2","句子3"],"dialogue_prompt":"对话场景描述","challenge":"综合挑战文本"}。只返回JSON。`;
 
   try {
     const raw = await askAI([{ role: 'system', content: '你是英语口语教练，只返回JSON。' }, { role: 'user', content: prompt }]);
@@ -152,243 +197,159 @@ async function generateTodayTask() {
     const data = JSON.parse(jsonStr);
 
     document.getElementById('dailyGoalText').textContent = data.goal || '完成今日拆解任务';
-    document.getElementById('challengeText').textContent = data.challenge || '不看稿，把所学内容连起来说一遍。';
-
-    let allSentencesHTML = '';
-    data.steps.forEach((step, stepIndex) => {
-      allSentencesHTML += `<div class="step-group"><h3>${step.stepName}</h3>`;
-      step.sentences.forEach((s, sIndex) => {
-        const uniqueId = `read_${stepIndex}_${sIndex}`;
-        allSentencesHTML += `
-          <div class="core-sentence" id="sentence_${uniqueId}">
-            <div class="en">${s.en}</div>
-            <div class="cn">${s.cn}</div>
-            <button class="read-aloud-btn" onclick="startFollowRead('${uniqueId}', '${s.en.replace(/'/g, "\\'")}')">🎤 跟读</button>
-            <div class="feedback-box" id="feedback_${uniqueId}"></div>
-          </div>`;
-      });
-      allSentencesHTML += `</div>`;
-    });
-    document.getElementById('coreSentences').innerHTML = allSentencesHTML;
-
-    STATE.todaySentences = data.steps.flatMap(s => s.sentences);
-    STATE.chatHistory = [];
+    
+    lessonData = {
+      warmup: data.warmup || ['Hello!'],
+      core: data.core || ['My name is Li Ming.'],
+      dialogue: data.dialogue_prompt || 'Let\'s have a chat.',
+      challenge: data.challenge || 'Introduce yourself in 30 seconds.'
+    };
+    STATE.lessonData = lessonData;
     saveState(STATE);
-    initChat();
+
+    document.getElementById('startLessonBtn').disabled = false;
+    document.getElementById('startLessonBtn').textContent = '🚀 开始今日闯关';
   } catch (e) {
-    document.getElementById('coreSentences').innerHTML = '<p class="subtitle">AI生成失败：' + e.message + '</p>';
+    document.getElementById('dailyGoalText').textContent = 'AI生成失败：' + e.message;
   }
 }
 
-// ---------- 跟读功能（含 AI 发音纠错） ----------
-function startFollowRead(uniqueId, originalText) {
-  if (recognitionActive) { showToast('正在录音中，请稍后...'); return; }
+// ---------- 闯关逻辑 ----------
+document.getElementById('startLessonBtn').addEventListener('click', () => {
+  if (!lessonData) { showToast('任务还在加载中...'); return; }
+  currentStepIndex = 0;
+  currentSentenceIndex = 0;
+  document.getElementById('view-lesson').classList.add('active');
+  loadStep(0);
+});
+
+document.getElementById('closeLessonBtn').addEventListener('click', () => {
+  document.getElementById('view-lesson').classList.remove('active');
+});
+
+function loadStep(stepIndex) {
+  currentStepIndex = stepIndex;
+  const lessonTitle = document.getElementById('lessonTitle');
+  const sentenceBox = document.getElementById('sentenceBox');
+  const translationBox = document.getElementById('translationBox');
+  const nextBtn = document.getElementById('nextSentenceBtn');
+  const recordBtn = document.getElementById('recordBtn');
   
-  // 重置所有按钮
-  document.querySelectorAll('.read-aloud-btn').forEach(btn => {
-    btn.textContent = '🎤 跟读';
-    btn.style.background = 'rgba(59,130,246,0.2)';
-  });
+  nextBtn.style.display = 'none';
+  recordBtn.style.display = 'flex';
+  translationBox.textContent = '';
+  document.getElementById('lessonStatus').textContent = '点击麦克风开始录音';
+  updateProgressRing(stepIndex);
 
-  const btn = document.querySelector(`#sentence_${uniqueId} .read-aloud-btn`);
-  const feedbackBox = document.getElementById(`feedback_${uniqueId}`);
-  feedbackBox.style.display = 'none';
-  feedbackBox.innerHTML = '';
-
-  btn.textContent = '⏹️ 停止';
-  btn.style.background = '#ef4444';
-  currentRecordingTarget = uniqueId;
-  recognitionActive = true;
-
-  // 关键：在 start 之前绑定 onresult
-  recognition.onresult = async (e) => {
-    const userSpeech = e.results[0][0].transcript;
-    btn.textContent = '🎤 跟读';
-    btn.style.background = 'rgba(59,130,246,0.2)';
-    recognitionActive = false;
-    currentRecordingTarget = null;
-
-    // 1. 文本匹配打分
-    const matchScore = calculateMatchScore(originalText, userSpeech);
-
-    // 2. 调用 AI 进行深度发音纠错
-    feedbackBox.style.display = 'block';
-    feedbackBox.innerHTML = `<span class="loading"></span> 正在分析发音...`;
-
-    try {
-      const prompt = `你是英语发音教练。学生跟读原句："${originalText}"，识别出的文本是："${userSpeech}"。
-请分析学生的发音问题（比如 th 发音、连读、重音），用中文给出建议。
-返回JSON：{"score":0-100,"feedback":"发音纠错建议"}`;
-      const raw = await askAI([{ role: 'system', content: '你是英语发音教练，只返回JSON。' }, { role: 'user', content: prompt }]);
-      const jsonStr = raw.replace(/```json|```/g, '').trim();
-      const aiData = JSON.parse(jsonStr);
-      
-      feedbackBox.innerHTML = `
-        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-          <span>匹配度：${matchScore}%</span>
-          <span>发音分：${aiData.score}/100</span>
-        </div>
-        <div>${aiData.feedback}</div>
-      `;
-    } catch (err) {
-      feedbackBox.innerHTML = `匹配度：${matchScore}%<br>AI纠错暂时不可用。`;
-    }
-  };
-
-  recognition.onerror = (e) => {
-    btn.textContent = '🎤 跟读';
-    btn.style.background = 'rgba(59,130,246,0.2)';
-    recognitionActive = false;
-    currentRecordingTarget = null;
-    if (e.error === 'no-speech') {
-      showToast('没听清，请再试一次');
-    } else {
-      showToast('识别出错：' + e.error);
-    }
-  };
-
-  recognition.start();
-}
-
-function calculateMatchScore(original, userSpeech) {
-  const origWords = original.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/);
-  const userWords = userSpeech.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/);
-  let matched = 0;
-  origWords.forEach(w => { if (userWords.includes(w)) matched++; });
-  return Math.round((matched / origWords.length) * 100);
-}
-
-// ---------- 对话逻辑 ----------
-function initChat() {
-  document.getElementById('chatBox').innerHTML = '';
-  const info = getDayInfo(getStudyDay());
-  const greeting = `Hi! Let's practice. Today's topic is: ${info?.day || 'free talk'}. Are you ready?`;
-  addMessage('ai', greeting);
-  speak(greeting);
-}
-
-async function getAIFeedback(userText) {
-  const info = getDayInfo(getStudyDay());
-  const history = STATE.chatHistory || [];
-  
-  const systemPrompt = `你是一名英语口语教练，学生水平CEFR A1-A2，英式英语。
-主题：${info.day}。
-请回应用户，并用中文纠错，给出评分。
-返回JSON：{"reply":"","feedback":"","score":{"流利度":1,"发音":1,"词汇":1,"语法":1,"互动":1}}`;
-
-  const messages = [{ role: 'system', content: systemPrompt }];
-  history.slice(-10).forEach(m => messages.push(m));
-  messages.push({ role: 'user', content: userText });
-
-  try {
-    const raw = await askAI(messages);
-    const jsonStr = raw.replace(/```json|```/g, '').trim();
-    const data = JSON.parse(jsonStr);
-
-    addMessage('ai', data.reply);
-    speak(data.reply);
-    addFeedback(`<div class="feedback-item"><span class="feedback-label">纠错：</span>${data.feedback}</div>
-      <div class="feedback-item"><span class="feedback-label">评分：</span>流利度 ${data.score.流利度}/5 · 发音 ${data.score.发音}/5 · 词汇 ${data.score.词汇}/5 · 语法 ${data.score.语法}/5 · 互动 ${data.score.互动}/5</div>`);
-
-    history.push({ role: 'user', content: userText });
-    history.push({ role: 'assistant', content: data.reply });
-    STATE.chatHistory = history;
-    STATE.reviewData.push({ day: getStudyDay(), userText, ...data, time: Date.now() });
-    saveState(STATE);
-  } catch (e) {
-    addMessage('ai', 'Sorry, let me try again.');
+  if (stepIndex === 0) {
+    lessonTitle.textContent = '关卡1：热身';
+    const sentence = lessonData.warmup[currentSentenceIndex];
+    renderSentence(sentence, '');
+  } else if (stepIndex === 1) {
+    lessonTitle.textContent = '关卡2：核心句型';
+    const sentence = lessonData.core[currentSentenceIndex];
+    renderSentence(sentence, '');
+  } else if (stepIndex === 2) {
+    lessonTitle.textContent = '关卡3：情景对话';
+    sentenceBox.innerHTML = '💬 ' + lessonData.dialogue;
+    translationBox.textContent = '请点击下方麦克风，与AI自由对话';
+    recordBtn.style.display = 'flex';
+    // 对话模式特殊处理
+    document.getElementById('nextSentenceBtn').style.display = 'none';
+    currentStepIndex = 2;
+  } else if (stepIndex === 3) {
+    lessonTitle.textContent = '关卡4：今日挑战';
+    sentenceBox.innerHTML = '🏆 ' + lessonData.challenge;
+    translationBox.textContent = '不看稿，连起来说一遍';
+    recordBtn.style.display = 'flex';
+    document.getElementById('nextSentenceBtn').style.display = 'none';
+    currentStepIndex = 3;
   }
 }
 
-function addMessage(role, text) {
-  const box = document.getElementById('chatBox');
-  const div = document.createElement('div');
-  div.className = 'msg msg-' + (role === 'ai' ? 'ai' : 'user');
-  div.textContent = text;
-  box.appendChild(div); box.scrollTop = box.scrollHeight;
+function renderSentence(en, userSpeech) {
+  const box = document.getElementById('sentenceBox');
+  const targetWords = en.split(' ');
+  const speechWords = userSpeech ? userSpeech.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/) : [];
+  
+  if (!userSpeech) {
+    box.innerHTML = targetWords.map(w => `<span class="word">${w}</span>`).join(' ');
+    return;
+  }
+  
+  box.innerHTML = targetWords.map(w => {
+    const cleanW = w.toLowerCase().replace(/[^a-z]/g, '');
+    const isGood = speechWords.includes(cleanW);
+    return `<span class="word ${isGood ? 'good' : 'bad'}">${w}</span>`;
+  }).join(' ');
 }
 
-function addFeedback(html) {
-  const box = document.getElementById('chatBox');
-  const div = document.createElement('div');
-  div.className = 'msg msg-feedback';
-  div.innerHTML = html;
-  box.appendChild(div); box.scrollTop = box.scrollHeight;
-}
-
-// ---------- 悬浮录音按钮（对话专用） ----------
-const fabRecord = document.getElementById('fabRecord');
-
-fabRecord.addEventListener('click', async () => {
-  if (recognitionActive) {
-    // 结束录音
+// 录音按钮点击
+document.getElementById('recordBtn').addEventListener('click', () => {
+  if (isRecording) {
     recognition.stop();
-    fabRecord.classList.remove('recording');
-    fabRecord.textContent = '🎤';
-    document.getElementById('status').innerHTML = '<span class="loading"></span> 识别中...';
+    stopRecordingUI();
+    document.getElementById('lessonStatus').textContent = '已手动停止，等待识别...';
   } else {
-    // 开始录音
-    recognitionActive = true;
-    fabRecord.classList.add('recording');
-    fabRecord.textContent = '⏹️';
-    document.getElementById('status').textContent = '录音中...';
-    currentRecordingTarget = 'chat';
-
-    recognition.onresult = async (e) => {
-      const text = e.results[0][0].transcript;
-      addMessage('user', text);
-      document.getElementById('status').textContent = '';
-      recognitionActive = false;
-      await getAIFeedback(text);
-    };
-
-    recognition.onerror = (e) => {
-      document.getElementById('status').textContent = '未识别到声音，请重试。';
-      recognitionActive = false;
-      fabRecord.classList.remove('recording');
-      fabRecord.textContent = '🎤';
-    };
-
-    recognition.start();
+    startRecording();
   }
 });
 
-document.getElementById('skipBtn').addEventListener('click', () => {
-  const msg = 'Let me ask you: What do you think about this topic?';
-  addMessage('ai', msg); speak(msg);
-});
+// 评估发音（逐词高亮 + AI纠错）
+async function evaluateSpeech(userSpeech) {
+  const sentenceBox = document.getElementById('sentenceBox');
+  const originalText = sentenceBox.textContent.replace('💬 ', '').replace('🏆 ', '');
+  
+  // 1. 逐词高亮
+  renderSentence(originalText, userSpeech);
 
-document.getElementById('endChatBtn').addEventListener('click', () => {
-  document.querySelector('.nav-item[data-view="view-today"]').click();
-  showToast('已结束对话，请查看复盘');
-});
-
-// ---------- 复盘与打卡 ----------
-document.getElementById('reviewBtn').addEventListener('click', () => {
-  const reviews = (STATE.reviewData || []).filter(r => r.day === getStudyDay());
-  if (reviews.length === 0) { document.getElementById('reviewContent').innerHTML = '<p class="subtitle">还没有对话记录，先完成对话练习。</p>'; return; }
-  const avg = { 流利度: 0, 发音: 0, 词汇: 0, 语法: 0, 互动: 0 };
-  reviews.forEach(r => { for (const k in avg) avg[k] += r.score[k]; });
-  for (const k in avg) avg[k] = (avg[k] / reviews.length).toFixed(1);
-  document.getElementById('reviewContent').innerHTML = `
-    <div class="core-sentence"><div class="en">今日对话次数：${reviews.length}次</div>
-    <div class="cn">平均分：流利度 ${avg.流利度} · 发音 ${avg.发音} · 词汇 ${avg.词汇} · 语法 ${avg.语法} · 互动 ${avg.互动}</div></div>`;
-  showToast('复盘报告已生成');
-});
-
-document.getElementById('finishBtn').addEventListener('click', () => {
-  const day = getStudyDay();
-  if (!STATE.completedDays.includes(day)) {
-    STATE.completedDays.push(day); STATE.xp += 40;
-    const last = STATE.lastDate; const todayStr = today();
-    if (last) { const diff = (new Date(todayStr) - new Date(last)) / 86400000; STATE.streak = diff === 1 ? STATE.streak + 1 : 1; } else { STATE.streak = 1; }
-    STATE.lastDate = todayStr; saveState(STATE);
+  // 2. AI 发音纠错
+  try {
+    const prompt = `你是英语发音教练。学生跟读原句："${originalText}"，识别出的文本是："${userSpeech}"。
+请用中文给出发音纠错建议（比如 th 咬舌、连读、重音）。
+返回JSON：{"feedback":"发音纠错建议","score":0-100}`;
+    const raw = await askAI([{ role: 'system', content: '你是英语发音教练，只返回JSON。' }, { role: 'user', content: prompt }]);
+    const jsonStr = raw.replace(/```json|```/g, '').trim();
+    const aiData = JSON.parse(jsonStr);
+    
+    document.getElementById('lessonStatus').innerHTML = `评分：${aiData.score}/100<br>${aiData.feedback}`;
+    document.getElementById('nextSentenceBtn').style.display = 'block';
+  } catch (err) {
+    document.getElementById('lessonStatus').textContent = 'AI纠错暂时不可用，但已识别到你的声音。';
+    document.getElementById('nextSentenceBtn').style.display = 'block';
   }
-  showToast('✅ Day ' + day + ' 打卡完成！+40 XP');
-  setTimeout(() => location.reload(), 1500);
+}
+
+// 下一句 / 下一关
+document.getElementById('nextSentenceBtn').addEventListener('click', () => {
+  if (currentStepIndex === 0) {
+    if (currentSentenceIndex < lessonData.warmup.length - 1) {
+      currentSentenceIndex++;
+      loadStep(0);
+    } else {
+      loadStep(1);
+    }
+  } else if (currentStepIndex === 1) {
+    if (currentSentenceIndex < lessonData.core.length - 1) {
+      currentSentenceIndex++;
+      loadStep(1);
+    } else {
+      loadStep(2); // 进入情景对话
+    }
+  }
 });
 
-// ---------- 历史与设置 ----------
+// 关卡3、4 对话处理（复用录音逻辑，但走对话接口）
+function handleDialogue(speechText) {
+  addMessage('user', speechText);
+  askAI([{ role: 'system', content: '你是英语口语教练，用英式英语自然回应用户，保持对话继续。' }, { role: 'user', content: speechText }]).then(reply => {
+    addMessage('ai', reply);
+    speak(reply);
+    document.getElementById('lessonStatus').textContent = '继续对话，或点击下方“下一句”按钮进入下一关。';
+  });
+}
+
+// ---------- 底部“复习”与“我的”逻辑 ----------
 function renderHistory() {
   const list = document.getElementById('historyList');
   if (!STATE.completedDays || STATE.completedDays.length === 0) { list.innerHTML = '暂无记录，去完成今天的任务吧！'; return; }
@@ -418,28 +379,33 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   if (confirm('确定要重置所有进度吗？这将清空所有XP和打卡记录！')) { localStorage.removeItem('speak6_state'); location.reload(); }
 });
 
-// ---------- 月度考核 ----------
-function checkMonthlyExam() {
+document.getElementById('reviewBtn').addEventListener('click', () => {
+  showToast('请查看底部“复习”标签');
+  document.querySelector('.nav-item[data-view="view-history"]').click();
+});
+
+document.getElementById('finishBtn').addEventListener('click', () => {
   const day = getStudyDay();
-  if (day % 30 === 0) {
-    const examCard = document.createElement('div');
-    examCard.className = 'glass-card';
-    examCard.innerHTML = `<div class="step-title">🏆 月度考核</div>
-      <p class="subtitle">今天进行第${Math.ceil(day / 30)}月考核，采用AI随机提问 + 自由对话模式。</p>
-      <button class="btn btn-primary" id="examBtn">开始月度考核</button>`;
-    document.getElementById('view-today').appendChild(examCard);
-    document.getElementById('examBtn').addEventListener('click', () => {
-      showToast('考核开始！请切换到对话练习标签');
-      document.querySelector('.nav-item[data-view="view-chat"]').click();
-      const msg = 'Welcome to your monthly exam. I will ask you 5 questions. Please answer in full sentences. Let\'s start: Can you introduce yourself briefly?';
-      addMessage('ai', msg); speak(msg);
-    });
+  if (!STATE.completedDays.includes(day)) {
+    STATE.completedDays.push(day); STATE.xp += 40;
+    const last = STATE.lastDate; const todayStr = today();
+    if (last) { const diff = (new Date(todayStr) - new Date(last)) / 86400000; STATE.streak = diff === 1 ? STATE.streak + 1 : 1; } else { STATE.streak = 1; }
+    STATE.lastDate = todayStr; saveState(STATE);
   }
+  showToast('✅ Day ' + day + ' 打卡完成！+40 XP');
+  setTimeout(() => location.reload(), 1500);
+});
+
+// 进度环更新
+function updateProgressRing(step) {
+  const ring = document.getElementById('progressRing');
+  const total = 4;
+  const offset = 157 - (157 * (step / total));
+  ring.style.strokeDashoffset = offset;
 }
 
 // ---------- 初始化 ----------
 window.addEventListener('load', () => {
-  initTimer(); // 启动累积计时
+  initTimer();
   generateTodayTask();
-  setTimeout(checkMonthlyExam, 2000);
 });

@@ -7,5 +7,5 @@ const CONFIG = {
     totalMonths: 6,
     startDate: '2026-10-08'
   },
-  asrProvider: 'browser' // 必须使用 browser，因为你是 iPhone Safari 环境
+  asrProvider: 'browser' // 必须使用 browser，iPhone Safari 兼容性最佳
 };

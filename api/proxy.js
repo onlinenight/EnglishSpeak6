@@ -39,8 +39,17 @@ export default async function handler(req, res) {
       headers = { 'Content-Type': 'application/json' };
       body = undefined;
     } else if (path === 'baidu-asr') {
-      targetUrl = `https://vop.baidu.com/server_api?token=${process.env.BAIDU_ACCESS_TOKEN}`;
+      // 从请求体中提取 token 和 cuid
+      const token = body.token;
+      const cuid = body.cuid || 'speak6_user';
+      
+      // 百度要求 cuid 必须在 URL 参数中
+      targetUrl = `https://vop.baidu.com/server_api?token=${token}&cuid=${encodeURIComponent(cuid)}`;
       headers = { 'Content-Type': 'application/json' };
+      
+      // 清理 body，去掉 token 和 cuid，避免百度 API 报重复参数错误
+      delete body.token;
+      delete body.cuid;
     } else {
       res.status(404).json({ error: '未知的 path 参数' });
       return;

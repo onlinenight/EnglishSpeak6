@@ -1,5 +1,5 @@
 // ============================================
-// app.js - 核心逻辑 (状态机 + 原生识别 + 百度TTS + 闭环复习)
+// app.js - 核心逻辑 (百度ASR重采样修复 + 原生TTS + 状态机)
 // ============================================
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -83,23 +83,126 @@ document.querySelectorAll('.nav-item').forEach(item => {
   });
 });
 
-// ---------- 语音识别（回归原生 Web Speech API，稳定可靠） ----------
-let recognition = null;
+// ---------- 百度语音识别（重采样修复） ----------
 let isRecording = false;
 let recordingTimeout = null;
 let currentStepIndex = 0;
 let currentSentenceIndex = 0;
 let lessonData = null;
 
-if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
-  recognition.lang = 'en-GB';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
+let baiduToken = null;
+let baiduTokenExpire = 0;
+
+async function getBaiduToken() {
+  const now = Date.now();
+  if (baiduToken && now < baiduTokenExpire) return baiduToken;
+  const res = await fetch(`${CONFIG.proxyUrl}?path=baidu-token`);
+  const data = await res.json();
+  if (!data.access_token) throw new Error('获取百度token失败');
+  baiduToken = data.access_token;
+  baiduTokenExpire = now + (data.expires_in - 600) * 1000;
+  return baiduToken;
 }
 
-// ---------- TTS（百度语音合成 + 降级容错） ----------
+async function baiduASR(audioBlob) {
+  const token = await getBaiduToken();
+  const buffer = await audioBlob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  const base64 = btoa(binary);
+  const res = await fetch(`${CONFIG.proxyUrl}?path=baidu-asr`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      format: 'wav',
+      rate: 16000,
+      channel: 1,
+      cuid: 'speak6_user',
+      token: token,
+      dev_pid: CONFIG.baiduAsrDevPid,
+      speech: base64,
+      len: buffer.byteLength
+    })
+  });
+  const data = await res.json();
+  if (data.err_no === 0 && data.result && data.result[0]) return data.result[0];
+  throw new Error('识别失败：' + (data.err_msg || JSON.stringify(data)));
+}
+
+// ---------- 录音逻辑（AudioContext采集PCM + 强制重采样） ----------
+let audioContext = null;
+let scriptProcessor = null;
+let mediaStream = null;
+let audioChunks = [];
+
+async function startRecording() {
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+  // 获取浏览器当前环境的真实采样率（如48000）
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioContext.createMediaStreamSource(mediaStream);
+  scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+  audioChunks = [];
+  scriptProcessor.onaudioprocess = (e) => { audioChunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+  source.connect(scriptProcessor);
+  scriptProcessor.connect(audioContext.destination);
+}
+
+function stopRecording() {
+  return new Promise((resolve) => {
+    const actualSampleRate = audioContext.sampleRate; // 获取48000或44100
+    try { scriptProcessor.disconnect(); mediaStream.getTracks().forEach(t => t.stop()); audioContext.close(); } catch (e) {}
+    
+    const totalLength = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0);
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    for (const chunk of audioChunks) { merged.set(chunk, offset); offset += chunk.length; }
+    
+    // 关键修复：强制重采样为16000Hz
+    const resampled = resampleTo16000(merged, actualSampleRate);
+    resolve(new Blob([encodeWAV(resampled, 16000)], { type: 'audio/wav' }));
+  });
+}
+
+// 重采样函数
+function resampleTo16000(samples, originalRate) {
+  if (originalRate === 16000) return samples;
+  const ratio = originalRate / 16000;
+  const newLength = Math.round(samples.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const index = i * ratio;
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    const fraction = index - lower;
+    if (upper >= samples.length) {
+      result[i] = samples[samples.length - 1];
+    } else {
+      result[i] = samples[lower] * (1 - fraction) + samples[upper] * fraction;
+    }
+  }
+  return result;
+}
+
+function encodeWAV(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  writeString(view, 0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, 'WAVE'); writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  writeString(view, 36, 'data'); view.setUint32(40, samples.length * 2, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true); offset += 2;
+  }
+  return buffer;
+}
+function writeString(view, offset, string) { for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i)); }
+
+// ---------- TTS ----------
 let ttsAudio = null;
 
 async function speak(text) {
@@ -110,18 +213,14 @@ async function speak(text) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text, per: CONFIG.baiduTtsPer, spd: 5, pit: 5 })
       });
-
       if (!res.ok) throw new Error('TTS请求失败');
-
       const audioBlob = await res.blob();
       const audioUrl = URL.createObjectURL(audioBlob);
-      
       return new Promise((resolve) => {
         if (ttsAudio) { ttsAudio.pause(); URL.revokeObjectURL(ttsAudio.src); }
         ttsAudio = new Audio(audioUrl);
         ttsAudio.onended = () => { resolve(); };
         ttsAudio.onerror = () => { resolve(); };
-        
         const playPromise = ttsAudio.play();
         if (playPromise !== undefined) {
           playPromise.catch(e => {
@@ -160,7 +259,7 @@ async function askAI(messages) {
   return data.choices[0].message.content;
 }
 
-// ---------- 生成今日任务（带音标） ----------
+// ---------- 生成今日任务 ----------
 async function generateTodayTask() {
   const dayNum = getStudyDay();
   const info = getDayInfo(dayNum);
@@ -222,7 +321,6 @@ document.getElementById('closeLessonBtn').addEventListener('click', () => {
   initTimer();
 });
 
-// 状态机控制：播放原声 -> 准备录音 -> 录音中 -> 识别中 -> 反馈
 async function loadStep(stepIndex) {
   currentStepIndex = stepIndex;
   const lessonTitle = document.getElementById('lessonTitle');
@@ -239,7 +337,6 @@ async function loadStep(stepIndex) {
   document.getElementById('lessonStatus').textContent = '准备就绪';
   document.getElementById('tipsText').textContent = '';
 
-  // 检查是否从复习页跳转
   const jumpTo = STATE.jumpToSentence;
   if (jumpTo && jumpTo.step === stepIndex) {
     currentSentenceIndex = jumpTo.index;
@@ -270,16 +367,13 @@ async function loadStep(stepIndex) {
     return;
   }
 
-  // 展示句子
   sentenceBox.innerHTML = sentenceObj.en;
   phoneticBox.textContent = sentenceObj.phonetic || '';
   translationBox.textContent = sentenceObj.cn || '';
   
-  // 自动播放一遍并开始录音
   await startTTSAndRecord(sentenceObj.en, stepIndex);
 }
 
-// TTS播放 + 自动开始录音
 async function startTTSAndRecord(sentence, stepIndex) {
   const statusText = document.getElementById('lessonStatus');
   statusText.textContent = '请听标准发音...';
@@ -292,41 +386,19 @@ async function startTTSAndRecord(sentence, stepIndex) {
   }, 800);
 }
 
-// ---------- 原生录音逻辑 ----------
+// ---------- 百度录音逻辑 ----------
 async function startRecordingSession(stepIndex) {
-  if (isRecording || !recognition) return;
+  if (isRecording) return;
   isRecording = true;
   document.getElementById('recordBtn').classList.add('recording');
   document.getElementById('waveform').classList.add('active');
   document.getElementById('lessonStatus').textContent = '录音中... 请朗读';
   
-  recognition.onresult = (e) => {
-    clearTimeout(recordingTimeout);
-    const userSpeech = e.results[0][0].transcript;
-    stopRecordingUI();
-    evaluateSpeech(userSpeech, stepIndex);
-  };
-
-  recognition.onerror = (e) => {
-    clearTimeout(recordingTimeout);
-    stopRecordingUI();
-    if (e.error === 'no-speech') showToast('没听清，请再试一次');
-    else showToast('识别出错：' + e.error);
-  };
-
-  recognition.onend = () => {
-    clearTimeout(recordingTimeout);
-    stopRecordingUI();
-  };
-
   try {
-    recognition.start();
-    // 6秒超时兜底，防止卡死
-    recordingTimeout = setTimeout(() => {
+    await startRecording();
+    recordingTimeout = setTimeout(async () => {
       if (isRecording) {
-        recognition.stop();
-        stopRecordingUI();
-        showToast('未识别到声音，请重试');
+        await endRecordingSession();
       }
     }, 6000);
   } catch (e) {
@@ -337,32 +409,38 @@ async function startRecordingSession(stepIndex) {
   }
 }
 
-function stopRecordingUI() {
+async function endRecordingSession() {
   if (!isRecording) return;
   isRecording = false;
   clearTimeout(recordingTimeout);
   document.getElementById('recordBtn').classList.remove('recording');
   document.getElementById('waveform').classList.remove('active');
   document.getElementById('lessonStatus').innerHTML = '<span class="loading"></span> 识别中...';
+
+  try {
+    const blob = await stopRecording();
+    const text = await baiduASR(blob);
+    evaluateSpeech(text, currentStepIndex);
+  } catch (e) {
+    document.getElementById('lessonStatus').textContent = '识别失败：' + e.message;
+  }
 }
 
-// 录音按钮点击
-document.getElementById('recordBtn').addEventListener('click', () => {
+document.getElementById('recordBtn').addEventListener('click', async () => {
   if (isRecording) {
-    recognition.stop();
+    await endRecordingSession();
   } else {
     startRecordingSession(currentStepIndex);
   }
 });
 
-// 重听按钮
 document.getElementById('listenBtn').addEventListener('click', async () => {
   const sentenceBox = document.getElementById('sentenceBox');
   const originalText = sentenceBox.textContent.replace('💬 ', '').replace('🎉 ', '');
   await speak(originalText);
 });
 
-// ---------- 三维打分 + 异步AI纠错 ----------
+// ---------- 三维打分 + AI纠错 ----------
 function evaluateSpeech(userSpeech, stepIndex) {
   const sentenceBox = document.getElementById('sentenceBox');
   const originalText = sentenceBox.textContent.replace('💬 ', '').replace('🎉 ', '');
@@ -397,7 +475,6 @@ function evaluateSpeech(userSpeech, stepIndex) {
       else if (totalScore >= 50) stars = 1;
       
       document.getElementById('lessonStatus').innerHTML = `准确度：${accuracy}% · 完整度：${completeness}% · 流利度：${fluency}%<br>${aiData.feedback}`;
-      document.getElementById('tipsText').textContent = aiData.feedback ? '' : '点击重听标准发音，再试一次';
       
       STATE.lastStars = stars;
       saveState(STATE);
@@ -419,7 +496,6 @@ function evaluateSpeech(userSpeech, stepIndex) {
     });
 }
 
-// 跳过此句
 document.getElementById('skipBtn').addEventListener('click', () => {
   const sentenceBox = document.getElementById('sentenceBox');
   const originalText = sentenceBox.textContent.replace('💬 ', '').replace('🎉 ', '');
@@ -429,7 +505,6 @@ document.getElementById('skipBtn').addEventListener('click', () => {
   goToNextSentence();
 });
 
-// 下一句
 document.getElementById('nextSentenceBtn').addEventListener('click', goToNextSentence);
 
 function goToNextSentence() {
@@ -450,7 +525,7 @@ function goToNextSentence() {
   }
 }
 
-// ---------- 关卡结算面板（星级评价） ----------
+// ---------- 结算面板 ----------
 function showSettlement(stepIndex) {
   const panel = document.getElementById('settlementPanel');
   const title = document.getElementById('settlementTitle');
@@ -490,7 +565,7 @@ function showSettlement(stepIndex) {
   panel.classList.add('show');
 }
 
-// ---------- 历史记录与未完成 ----------
+// ---------- 历史记录与复习 ----------
 function renderHistory() {
   const list = document.getElementById('historyList');
   if (!STATE.completedDays || STATE.completedDays.length === 0) { list.innerHTML = '暂无记录，去完成今天的任务吧！'; return; }
@@ -512,7 +587,6 @@ function renderHistory() {
   `).join('');
 }
 
-// 闭环复习：精准跳转到未完成句子
 function relearnSentence(text, step, index) {
   if (!lessonData) { showToast('今日任务正在加载，请稍后再试'); return; }
   STATE.jumpToSentence = { step: step, index: index };
@@ -560,7 +634,6 @@ document.getElementById('finishBtn').addEventListener('click', () => {
 });
 
 window.addEventListener('load', () => {
-  // iOS 解锁音频播放：添加一次性点击事件
   document.body.addEventListener('click', function unlockAudio() {
     const audio = new Audio();
     audio.play().catch(() => {});

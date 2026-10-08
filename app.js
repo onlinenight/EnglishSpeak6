@@ -1,5 +1,5 @@
 // ============================================
-// app.js - 核心逻辑 (原生语音识别 + 百度TTS + 防卡死)
+// app.js - 核心逻辑 (状态机 + 原生识别 + 百度TTS + 闭环复习)
 // ============================================
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -14,7 +14,7 @@ function getStudyDay() {
 function loadState() {
   const s = localStorage.getItem('speak6_state');
   if (s) return JSON.parse(s);
-  return { completedDays: [], xp: 0, streak: 0, lastDate: null, currentDay: 1, reviewData: [], chatHistory: [], dailyTimeSpent: {}, uncompleted: [] };
+  return { completedDays: [], xp: 0, streak: 0, lastDate: null, currentDay: 1, reviewData: [], dailyTimeSpent: {}, uncompleted: [] };
 }
 
 function saveState(state) { localStorage.setItem('speak6_state', JSON.stringify(state)); }
@@ -83,7 +83,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
   });
 });
 
-// ---------- 语音识别（回归原生 Web Speech API） ----------
+// ---------- 语音识别（回归原生 Web Speech API，稳定可靠） ----------
 let recognition = null;
 let isRecording = false;
 let recordingTimeout = null;
@@ -103,7 +103,6 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
 let ttsAudio = null;
 
 async function speak(text) {
-  // 1. 尝试使用百度 TTS
   if (CONFIG.ttsProvider === 'baidu') {
     try {
       const res = await fetch(`${CONFIG.proxyUrl}?path=baidu-tts`, {
@@ -123,7 +122,6 @@ async function speak(text) {
         ttsAudio.onended = () => { resolve(); };
         ttsAudio.onerror = () => { resolve(); };
         
-        // 核心修复：iOS 自动播放拦截
         const playPromise = ttsAudio.play();
         if (playPromise !== undefined) {
           playPromise.catch(e => {
@@ -136,8 +134,6 @@ async function speak(text) {
       console.error('百度TTS失败，降级:', e);
     }
   }
-
-  // 2. 降级到浏览器 TTS
   return fallbackSpeak(text);
 }
 
@@ -164,7 +160,7 @@ async function askAI(messages) {
   return data.choices[0].message.content;
 }
 
-// ---------- 生成今日任务 ----------
+// ---------- 生成今日任务（带音标） ----------
 async function generateTodayTask() {
   const dayNum = getStudyDay();
   const info = getDayInfo(dayNum);
@@ -188,7 +184,7 @@ async function generateTodayTask() {
 关卡1：热身（1句）
 关卡2：核心句型（2句）
 关卡3：情景对话（1段文字描述）
-返回JSON：{"goal":"今日目标","warmup":["句子1"],"core":["句子2","句子3"],"dialogue_prompt":"对话场景描述"}。只返回JSON。`;
+返回JSON：{"goal":"今日目标","warmup":[{"en":"句子1","phonetic":"/音标/","cn":"翻译"}],"core":[{"en":"句子2","phonetic":"/音标/","cn":"翻译"}],"dialogue_prompt":"对话场景描述"}。只返回JSON。`;
 
   try {
     const raw = await askAI([{ role: 'system', content: '你是英语口语教练，只返回JSON。' }, { role: 'user', content: prompt }]);
@@ -198,8 +194,8 @@ async function generateTodayTask() {
     document.getElementById('dailyGoalText').textContent = data.goal || '完成今日拆解任务';
     
     lessonData = {
-      warmup: data.warmup || ['Hello!'],
-      core: data.core || ['My name is Li Ming.'],
+      warmup: data.warmup || [{en:'Hello!', phonetic:'/həˈloʊ/', cn:'你好'}],
+      core: data.core || [{en:'My name is Li Ming.', phonetic:'/maɪ neɪm ɪz liː mɪŋ/', cn:'我叫李明'}],
       dialogue: data.dialogue_prompt || 'Let\'s have a chat.'
     };
     STATE.lessonData = lessonData;
@@ -226,10 +222,12 @@ document.getElementById('closeLessonBtn').addEventListener('click', () => {
   initTimer();
 });
 
+// 状态机控制：播放原声 -> 准备录音 -> 录音中 -> 识别中 -> 反馈
 async function loadStep(stepIndex) {
   currentStepIndex = stepIndex;
   const lessonTitle = document.getElementById('lessonTitle');
   const sentenceBox = document.getElementById('sentenceBox');
+  const phoneticBox = document.getElementById('phoneticBox');
   const translationBox = document.getElementById('translationBox');
   const nextBtn = document.getElementById('nextSentenceBtn');
   const recordBtn = document.getElementById('recordBtn');
@@ -238,9 +236,10 @@ async function loadStep(stepIndex) {
   nextBtn.style.display = 'none';
   recordBtn.style.display = 'flex';
   skipBtn.style.display = 'block';
-  translationBox.textContent = '';
   document.getElementById('lessonStatus').textContent = '准备就绪';
+  document.getElementById('tipsText').textContent = '';
 
+  // 检查是否从复习页跳转
   const jumpTo = STATE.jumpToSentence;
   if (jumpTo && jumpTo.step === stepIndex) {
     currentSentenceIndex = jumpTo.index;
@@ -248,34 +247,41 @@ async function loadStep(stepIndex) {
     saveState(STATE);
   }
 
+  let sentenceObj = null;
   if (stepIndex === 0) {
     lessonTitle.textContent = '关卡1：热身';
     skipBtn.style.display = 'none';
-    const sentence = lessonData.warmup[currentSentenceIndex];
-    sentenceBox.innerHTML = sentence;
-    await startTTSAndRecord(sentence, 0);
+    sentenceObj = lessonData.warmup[currentSentenceIndex];
   } else if (stepIndex === 1) {
     lessonTitle.textContent = '关卡2：核心句型';
-    const sentence = lessonData.core[currentSentenceIndex];
-    sentenceBox.innerHTML = sentence;
-    await startTTSAndRecord(sentence, 1);
+    sentenceObj = lessonData.core[currentSentenceIndex];
   } else if (stepIndex === 2) {
     lessonTitle.textContent = '关卡3：情景对话';
     sentenceBox.innerHTML = '💬 ' + lessonData.dialogue;
+    phoneticBox.textContent = '';
     translationBox.textContent = '请点击下方麦克风，与AI自由对话';
     recordBtn.style.display = 'flex';
     skipBtn.style.display = 'none';
     document.getElementById('nextSentenceBtn').style.display = 'none';
     document.getElementById('lessonStatus').textContent = '点击麦克风开始对话';
+    return;
   } else if (stepIndex === 3) {
     showSettlement(3);
+    return;
   }
+
+  // 展示句子
+  sentenceBox.innerHTML = sentenceObj.en;
+  phoneticBox.textContent = sentenceObj.phonetic || '';
+  translationBox.textContent = sentenceObj.cn || '';
+  
+  // 自动播放一遍并开始录音
+  await startTTSAndRecord(sentenceObj.en, stepIndex);
 }
 
-// TTS自动播放 + 自动录音
+// TTS播放 + 自动开始录音
 async function startTTSAndRecord(sentence, stepIndex) {
   const statusText = document.getElementById('lessonStatus');
-  
   statusText.textContent = '请听标准发音...';
   await speak(sentence);
   
@@ -344,10 +350,16 @@ function stopRecordingUI() {
 document.getElementById('recordBtn').addEventListener('click', () => {
   if (isRecording) {
     recognition.stop();
-    // 稍等片刻让 end 触发
   } else {
     startRecordingSession(currentStepIndex);
   }
+});
+
+// 重听按钮
+document.getElementById('listenBtn').addEventListener('click', async () => {
+  const sentenceBox = document.getElementById('sentenceBox');
+  const originalText = sentenceBox.textContent.replace('💬 ', '').replace('🎉 ', '');
+  await speak(originalText);
 });
 
 // ---------- 三维打分 + 异步AI纠错 ----------
@@ -385,6 +397,7 @@ function evaluateSpeech(userSpeech, stepIndex) {
       else if (totalScore >= 50) stars = 1;
       
       document.getElementById('lessonStatus').innerHTML = `准确度：${accuracy}% · 完整度：${completeness}% · 流利度：${fluency}%<br>${aiData.feedback}`;
+      document.getElementById('tipsText').textContent = aiData.feedback ? '' : '点击重听标准发音，再试一次';
       
       STATE.lastStars = stars;
       saveState(STATE);
@@ -437,7 +450,7 @@ function goToNextSentence() {
   }
 }
 
-// ---------- 关卡结算面板 ----------
+// ---------- 关卡结算面板（星级评价） ----------
 function showSettlement(stepIndex) {
   const panel = document.getElementById('settlementPanel');
   const title = document.getElementById('settlementTitle');
@@ -499,6 +512,7 @@ function renderHistory() {
   `).join('');
 }
 
+// 闭环复习：精准跳转到未完成句子
 function relearnSentence(text, step, index) {
   if (!lessonData) { showToast('今日任务正在加载，请稍后再试'); return; }
   STATE.jumpToSentence = { step: step, index: index };

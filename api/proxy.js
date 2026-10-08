@@ -1,21 +1,13 @@
 // api/proxy.js - Vercel Serverless Function
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
 
   const { path } = req.query;
-
-  if (!path) {
-    res.status(400).json({ error: '缺少 path 参数' });
-    return;
-  }
+  if (!path) { res.status(400).json({ error: '缺少 path 参数' }); return; }
 
   try {
     let targetUrl = '';
@@ -23,36 +15,26 @@ export default async function handler(req, res) {
     let body = req.body;
 
     if (path === 'deepseek') {
-      if (!process.env.DEEPSEEK_API_KEY) {
-        throw new Error("缺少环境变量 DEEPSEEK_API_KEY");
-      }
+      if (!process.env.DEEPSEEK_API_KEY) throw new Error("缺少环境变量 DEEPSEEK_API_KEY");
       targetUrl = 'https://api.deepseek.com/chat/completions';
       headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       };
     } else if (path === 'baidu-token') {
-      if (!process.env.BAIDU_API_KEY || !process.env.BAIDU_SECRET_KEY) {
-        throw new Error("缺少百度语音识别环境变量");
-      }
+      if (!process.env.BAIDU_API_KEY || !process.env.BAIDU_SECRET_KEY) throw new Error("缺少百度环境变量");
       targetUrl = `https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=${process.env.BAIDU_API_KEY}&client_secret=${process.env.BAIDU_SECRET_KEY}`;
       headers = { 'Content-Type': 'application/json' };
       body = undefined;
     } else if (path === 'baidu-asr') {
-      // 从请求体中提取 token 和 cuid
       const token = body.token;
       const cuid = body.cuid || 'speak6_user';
-      
-      // 百度要求 cuid 必须在 URL 参数中
       targetUrl = `https://vop.baidu.com/server_api?token=${token}&cuid=${encodeURIComponent(cuid)}`;
       headers = { 'Content-Type': 'application/json' };
-      
-      // 清理 body，去掉 token 和 cuid，避免百度 API 报重复参数错误
       delete body.token;
       delete body.cuid;
     } else {
-      res.status(404).json({ error: '未知的 path 参数' });
-      return;
+      res.status(404).json({ error: '未知的 path 参数' }); return;
     }
 
     const response = await fetch(targetUrl, {
@@ -69,7 +51,6 @@ export default async function handler(req, res) {
 
     const data = await response.json();
     res.status(200).json(data);
-
   } catch (error) {
     console.error('代理请求失败:', error);
     res.status(500).json({ error: '代理内部错误', message: error.message });

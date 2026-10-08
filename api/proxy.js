@@ -17,10 +17,7 @@ export default async function handler(req, res) {
     if (path === 'deepseek') {
       if (!process.env.DEEPSEEK_API_KEY) throw new Error("缺少环境变量 DEEPSEEK_API_KEY");
       targetUrl = 'https://api.deepseek.com/chat/completions';
-      headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-      };
+      headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` };
     } else if (path === 'baidu-token') {
       if (!process.env.BAIDU_API_KEY || !process.env.BAIDU_SECRET_KEY) throw new Error("缺少百度环境变量");
       targetUrl = `https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=${process.env.BAIDU_API_KEY}&client_secret=${process.env.BAIDU_SECRET_KEY}`;
@@ -31,15 +28,13 @@ export default async function handler(req, res) {
       const cuid = body.cuid || 'speak6_user';
       targetUrl = `https://vop.baidu.com/server_api?token=${token}&cuid=${encodeURIComponent(cuid)}`;
       headers = { 'Content-Type': 'application/json' };
-      delete body.token;
-      delete body.cuid;
+      delete body.token; delete body.cuid;
     } else {
       res.status(404).json({ error: '未知的 path 参数' }); return;
     }
 
     const response = await fetch(targetUrl, {
-      method: req.method,
-      headers: headers,
+      method: req.method, headers: headers,
       body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(body) : undefined
     });
 
